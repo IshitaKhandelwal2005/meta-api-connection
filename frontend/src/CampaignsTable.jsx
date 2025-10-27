@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
+import { jsonToCsv, downloadCsv } from './utils/csvExport';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 axios.defaults.withCredentials = true;
@@ -539,6 +540,29 @@ const CampaignsTable = () => {
                         ))}
                     </select>
                     
+                    {/* Export Button */}
+                    <button 
+                        onClick={() => {
+                            const csvData = jsonToCsv(allCampaigns, {
+                                fields: ['id', 'campaign_name', 'objective', 'campaign_status', 'budget', 'created_time'],
+                                fieldNames: {
+                                    id: 'Campaign ID',
+                                    campaign_name: 'Campaign Name',
+                                    objective: 'Objective',
+                                    campaign_status: 'Status',
+                                    budget: 'Daily Budget',
+                                    created_time: 'Created Date'
+                                }
+                            });
+                            downloadCsv(csvData, `campaigns-${advertiserId || 'export'}`);
+                        }}
+                        style={styles.exportButton}
+                        disabled={loading || allCampaigns.length === 0}
+                        title="Export to CSV"
+                    >
+                        📊 Export CSV
+                    </button>
+                    
                     {/* Sort Button */}
                     <button 
                         onClick={openSortDialog}
@@ -803,6 +827,25 @@ const styles = {
     loginButton: { padding: '12px 25px', cursor: 'pointer', backgroundColor: '#3b5998', color: 'white', border: 'none', borderRadius: '6px', fontSize: '16px' },
     paginationControls: { marginTop: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center' },
     paginationButton: { padding: '8px 15px', margin: '0 8px', cursor: 'pointer', backgroundColor: '#f0f0f0', border: '1px solid #ddd', borderRadius: '4px' },
+    exportButton: { 
+        padding: '10px 15px', 
+        cursor: 'pointer', 
+        backgroundColor: '#4CAF50', 
+        color: 'white', 
+        border: 'none', 
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        '&:hover': {
+            backgroundColor: '#45a049',
+        },
+        '&:disabled': {
+            backgroundColor: '#cccccc',
+            cursor: 'not-allowed',
+            opacity: 0.6
+        }
+    },
     statusBadge: (status) => {
         let color = '#777';
         switch (status) {
