@@ -1,7 +1,7 @@
-
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
+const session = require('express-session');
 const axios = require('axios'); 
 const qs = require('querystring'); 
 const adsSdk = require('facebook-nodejs-business-sdk');
@@ -17,15 +17,33 @@ const OPEN_API_BASE = 'https://adsapi.cn.messenger.com';
 const API_VERSION = 'v1.3';
 const GRAPH_API_VERSION = 'v24.0'; // Used for token exchange
 
-// **SECURE STORAGE:** This will temporarily hold the access token. 
-// Replace with a secure session store or database in a production app.
-let metaAccessToken = null; 
+// Auth middleware to check if user is authenticated
+const requireAuth = (req, res, next) => {
+  if (!req.session.metaAccessToken) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  next();
+};
 
 // --- MIDDLEWARE ---
 // Configure CORS to allow access from the React frontend (running on port 3000)
-app.use(cors({ origin: 'http://localhost:3000' }));
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true
+}));
 app.use(express.json());
 
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
 // ==========================================================
 // 1. AUTHENTICATION (OAuth 2.0 Server-Side Flow)
@@ -42,6 +60,14 @@ app.get('/auth/meta', (req, res) => {
 });
 
 // Route 2: Callback URL to exchange the authorization code for an Access Token.
+// Check authentication status
+app.get('/auth/status', (req, res) => {
+  res.json({ 
+    authenticated: !!req.session.metaAccessToken,
+    expiresAt: req.session.tokenExpiresAt
+  });
+});
+
 app.get('/auth/meta/callback', async (req, res) => {
     const { code, error, error_reason } = req.query;
     
@@ -56,9 +82,12 @@ app.get('/auth/meta/callback', async (req, res) => {
         const tokenExchangeUrl = `https://graph.facebook.com/v24.0/oauth/access_token?client_id=${process.env.META_APP_ID}&redirect_uri=${process.env.REDIRECT_URI}&client_secret=${process.env.META_APP_SECRET}&code=${code}`;
         
         const tokenResponse = await axios.get(tokenExchangeUrl);
-
-        metaAccessToken = tokenResponse.data.access_token;
-        console.log('✅ Access Token acquired and stored securely on the server.');
+        req.session.metaAccessToken = tokenResponse.data.access_token;
+        // Set token expiration (default to 2 hours from now if not provided)
+        const expiresIn = tokenResponse.data.expires_in || 7200; // Default to 2 hours
+        req.session.tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+        
+        console.log('✅ Access Token acquired and stored in session.');
         // Redirect user back to the frontend with a success flag
         res.redirect('http://localhost:3000/?authSuccess=true');
 
@@ -69,10 +98,7 @@ app.get('/auth/meta/callback', async (req, res) => {
     }
 });
 
-app.get('/api/campaigns', async (req, res) => {
-  if (!metaAccessToken) {
-    return res.status(401).json({ error: 'Not Authenticated. Please complete the OAuth flow first.' });
-  }
+app.get('/api/campaigns', requireAuth, async (req, res) => {
   // console.log("reached first");
   const { advertiser_id, page_size = 25 } = req.query;
   const finalAdvertiserId = advertiser_id?.startsWith('act_')
@@ -80,12 +106,12 @@ app.get('/api/campaigns', async (req, res) => {
   : `act_${advertiser_id || process.env.ADVERTISER_ID}`;
   
   try {
-      const endpoint = `https://graph.facebook.com/v24.0/${finalAdvertiserId}?fields=campaigns%7Bid%2Cname%2Cobjective%2Cstatus%2Cdaily_budget%2Ccreated_time%7D&access_token=${metaAccessToken}`;
+      const endpoint = `https://graph.facebook.com/v24.0/${finalAdvertiserId}?fields=campaigns%7Bid%2Cname%2Cobjective%2Cstatus%2Cdaily_budget%2Ccreated_time%7D&access_token=${req.session.metaAccessToken}`;
 
       // console.log("entered try block"+metaAccessToken);
     
     const response = await axios.get(endpoint, {
-        headers: { Authorization: `Bearer ${metaAccessToken}` },
+        headers: { Authorization: `Bearer ${req.session.metaAccessToken}` },
     });
     
     // console.log("Full response data:", response.data);

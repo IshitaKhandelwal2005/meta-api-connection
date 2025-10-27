@@ -3,14 +3,21 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 
 const BACKEND_URL = 'http://localhost:5000';
-const DEFAULT_ADVERTISER_ID = 'act_799592772874590'; 
+
+// Configure axios to send cookies with requests
+axios.defaults.withCredentials = true;
 
 const CampaignsTable = () => {
     const [allCampaigns, setAllCampaigns] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [authStatus, setAuthStatus] = useState('LOGGED_OUT'); // LOGGED_OUT, AUTHENTICATED, ERROR
+    const [authStatus, setAuthStatus] = useState('CHECKING'); // CHECKING, LOGGED_OUT, AUTHENTICATED, ERROR
     const [apiError, setApiError] = useState(null);
-
+    const [advertiserId, setAdvertiserId] = useState(() => {
+      // Try to get from URL params first
+      const params = new URLSearchParams(window.location.search);
+      return params.get('advertiser_id') || '';
+    });
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState(''); // Nice-to-Have filter
     const [sortConfig, setSortConfig] = useState({ key: 'created_time', direction: 'descending' });
@@ -23,29 +30,80 @@ const CampaignsTable = () => {
     const STATUSES = ['', 'ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
 
 
-    useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('authSuccess')) {
-            setAuthStatus('AUTHENTICATED');
-            window.history.replaceState(null, null, window.location.pathname);
-        } else if (params.get('authError')) {
+    // Check authentication status on component mount and URL changes
+    const checkAuthStatus = useCallback(async () => {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            
+            // Handle OAuth callback
+            if (params.get('authSuccess')) {
+                setAuthStatus('AUTHENTICATED');
+                setIsAuthenticated(true);
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return;
+            } else if (params.get('authError')) {
+                setAuthStatus('ERROR');
+                setApiError('Authentication failed: ' + params.get('authError'));
+                window.history.replaceState({}, document.title, window.location.pathname);
+                return;
+            }
+
+            // Check current session status
+            const response = await axios.get(`${BACKEND_URL}/auth/status`);
+            
+            if (response.data.authenticated) {
+                setAuthStatus('AUTHENTICATED');
+                setIsAuthenticated(true);
+            } else {
+                setAuthStatus('LOGGED_OUT');
+                setIsAuthenticated(false);
+            }
+        } catch (error) {
+            console.error('Error checking auth status:', error);
             setAuthStatus('ERROR');
-            setApiError('Authentication failed: ' + params.get('authError'));
-            window.history.replaceState(null, null, window.location.pathname);
+            setApiError('Failed to check authentication status');
         }
     }, []);
 
-    const fetchCampaigns = useCallback(async () => {
-  if (authStatus !== 'AUTHENTICATED') return;
+    // Initial auth check on mount
+    useEffect(() => {
+        checkAuthStatus();
+    }, [checkAuthStatus]);
+
+    const fetchCampaigns = useCallback(async (id) => {
+        // Ensure we have a valid string ID
+        const currentId = typeof id === 'string' ? id.trim() : 
+                         (typeof advertiserId === 'string' ? advertiserId.trim() : '');
+        
+        if (!currentId) {
+            const errorMsg = !currentId ? 'Please enter a valid advertiser ID' : 'Advertiser ID is required';
+            setApiError(errorMsg);
+            return;
+        }
+
+        // Re-check auth status before making the request
+        try {
+            const authResponse = await axios.get(`${BACKEND_URL}/auth/status`);
+            if (!authResponse.data.authenticated) {
+                setAuthStatus('LOGGED_OUT');
+                setIsAuthenticated(false);
+                setApiError('Your session has expired. Please log in again.');
+                return;
+            }
+        } catch (error) {
+            console.error('Error verifying authentication:', error);
+            setApiError('Failed to verify authentication status');
+            return;
+        }
+  
   setLoading(true);
   setApiError(null);
 
   try {
     const response = await axios.get(`${BACKEND_URL}/api/campaigns`, {
       params: {
-        advertiser_id: DEFAULT_ADVERTISER_ID,
+        advertiser_id: currentId,
         page_size: 100,
-        // status: statusFilter,
       },
     });
     // console.log("this is the response in frontend"+response);
@@ -84,9 +142,11 @@ const CampaignsTable = () => {
 
     useEffect(() => {
         if (authStatus === 'AUTHENTICATED') {
-            fetchCampaigns();
+            setIsAuthenticated(true);
+        } else {
+            setIsAuthenticated(false);
         }
-    }, [authStatus, fetchCampaigns]);
+    }, [authStatus]);
 
     useEffect(() => {
         setCurrentPage(1);
@@ -185,6 +245,31 @@ const CampaignsTable = () => {
             return <tr><td colSpan="6" style={{color: 'red', textAlign: 'center'}}>🚨 API Error: {apiError}</td></tr>;
         }
 
+        if (isAuthenticated && allCampaigns.length === 0 && !loading) {
+            // Show empty state with message
+            return (
+                <tr>
+                    <td colSpan="6" style={{ textAlign: 'center', padding: '40px' }}>
+                        {apiError ? (
+                            <p style={{ color: '#d32f2f' }}>{apiError}</p>
+                        ) : (
+                            <p>No campaigns found. Please enter an advertiser ID and click Load Campaigns.</p>
+                        )}
+                    </td>
+                </tr>
+            );
+        }
+
+        if (authStatus === 'CHECKING') {
+            return (
+                <tr>
+                    <td colSpan="6" style={{ textAlign: 'center', padding: '50px' }}>
+                        <div>Checking authentication status...</div>
+                    </td>
+                </tr>
+            );
+        }
+        
         if (authStatus === 'LOGGED_OUT') {
             return (
                 <tr>
@@ -206,7 +291,7 @@ const CampaignsTable = () => {
 
         if (currentCampaigns.length === 0 && authStatus === 'AUTHENTICATED') {
             // Empty state (no data returned from API)
-            return <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>No campaign data found for advertiser ID **{DEFAULT_ADVERTISER_ID}**.</td></tr>;
+            return <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>No campaign data found for advertiser ID <strong>{advertiserId}</strong>.</td></tr>;
         }
 
         return currentCampaigns.map((campaign) => (
@@ -234,10 +319,41 @@ const CampaignsTable = () => {
     return (
         <div style={styles.container}>
             <h1 style={styles.header}>Meta Campaign Dashboard</h1>
-            <p style={styles.subHeader}>
-                Advertiser: <strong>{DEFAULT_ADVERTISER_ID}</strong> 
-                {authStatus === 'AUTHENTICATED' && ` (${allCampaigns.length} total campaigns loaded)`}
-            </p>
+            
+            {!isAuthenticated ? null : (
+                <>
+                    <div style={styles.advertiserInputContainer}>
+                        <input
+                            type="text"
+                            placeholder="Enter Advertiser ID"
+                            value={advertiserId}
+                            onChange={(e) => {
+                              console.log('Input changed:', e.target.value);
+                              setAdvertiserId(e.target.value);
+                            }}
+                            onKeyPress={(e) => e.key === 'Enter' && advertiserId && advertiserId.trim() && fetchCampaigns(advertiserId.trim())}
+                            style={styles.advertiserInput}
+                            disabled={loading}
+                        />
+                        <button 
+                            onClick={() => {
+                              console.log('Load Campaigns clicked');
+                              console.log('Current state - advertiserId:', advertiserId);
+                              fetchCampaigns(advertiserId);
+                            }}
+                            style={styles.loadButton}
+                            disabled={loading || !advertiserId || !advertiserId.trim()}
+                        >
+                            {loading ? 'Loading...' : 'Load Campaigns'}
+                        </button>
+                    </div>
+                    {allCampaigns.length > 0 && (
+                        <p style={styles.subHeader}>
+                            Showing {allCampaigns.length} campaigns for advertiser: <strong>{advertiserId}</strong>
+                        </p>
+                    )}
+                </>
+            )}
 
             {/* Controls Section (Only shown when authenticated) */}
             {authStatus === 'AUTHENTICATED' && (
@@ -385,6 +501,43 @@ const CampaignsTable = () => {
 
 // Basic Inline Styles
 const styles = {
+    advertiserInputContainer: {
+        display: 'flex',
+        gap: '10px',
+        margin: '10px 0',
+        alignItems: 'center',
+    },
+    advertiserInput: {
+        padding: '8px 12px',
+        borderRadius: '4px',
+        border: '1px solid #ccc',
+        fontSize: '14px',
+        minWidth: '300px',
+    },
+    loadButton: {
+        padding: '8px 16px',
+        backgroundColor: '#4267B2',
+        color: 'white',
+        border: 'none',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        fontSize: '14px',
+    },
+    loadButton: {
+        '&:disabled': {
+            backgroundColor: '#a8c1e8',
+            cursor: 'not-allowed',
+        },
+    },
+    authContainer: {
+        textAlign: 'center',
+        margin: '20px 0',
+    },
+    authMessage: {
+        marginBottom: '15px',
+        fontSize: '16px',
+        color: '#555',
+    },
     sortButton: {
         padding: '10px 15px',
         backgroundColor: '#f0f0f0',
