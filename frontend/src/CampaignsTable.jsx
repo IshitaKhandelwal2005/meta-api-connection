@@ -18,7 +18,9 @@ const CampaignsTable = () => {
     });
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState(''); // Nice-to-Have filter
+    // State for filters and sorting
+    const [statusFilter, setStatusFilter] = useState('');
+    const [objectiveFilter, setObjectiveFilter] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'created_time', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [showSortDialog, setShowSortDialog] = useState(false);
@@ -26,6 +28,7 @@ const CampaignsTable = () => {
     const [sortOrder, setSortOrder] = useState('descending');
     const campaignsPerPage = 10;
     
+    // Available filter options
     const STATUSES = ['', 'ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
 
 
@@ -263,25 +266,35 @@ const CampaignsTable = () => {
     }, [searchTerm, statusFilter, sortConfig]);
 
     const filteredCampaigns = useMemo(() => {
-        const searchLower = searchTerm.toLowerCase();
-        return allCampaigns.filter(campaign => {
-            // Apply status filter if set
-            if (statusFilter && campaign.campaign_status !== statusFilter) {
-                return false;
-            }
-            
-            // If no search term, return all that match status filter
-            if (!searchLower) return true;
-            
-            // Check search term against all searchable fields
-            return (
-                (campaign.campaign_name && campaign.campaign_name.toLowerCase().includes(searchLower)) ||
-                (campaign.id && campaign.id.toString().toLowerCase().includes(searchLower)) ||
-                (campaign.objective && campaign.objective.toLowerCase().includes(searchLower)) ||
-                (campaign.campaign_status && campaign.campaign_status.toLowerCase().includes(searchLower))
+        let result = [...allCampaigns];
+        
+        // Apply search term filter
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            result = result.filter(campaign => 
+                (campaign.id && campaign.id.toLowerCase().includes(term)) ||
+                (campaign.campaign_name && campaign.campaign_name.toLowerCase().includes(term))
             );
-        });
-    }, [allCampaigns, searchTerm, statusFilter]);
+        }
+        
+        // Apply status filter
+        if (statusFilter) {
+            result = result.filter(campaign => 
+                campaign.campaign_status === statusFilter
+            );
+        }
+        
+        // Apply objective filter (case-insensitive partial match)
+        if (objectiveFilter) {
+            const objectiveTerm = objectiveFilter.toLowerCase();
+            result = result.filter(campaign => 
+                campaign.objective && 
+                campaign.objective.toLowerCase().includes(objectiveTerm)
+            );
+        }
+        
+        return result;
+    }, [allCampaigns, searchTerm, statusFilter, objectiveFilter]);
 
     // 2. Sorting
     const sortedCampaigns = useMemo(() => {
@@ -527,18 +540,50 @@ const CampaignsTable = () => {
                         style={styles.searchInput}
                     />
 
-                    {/* Status Filter (Nice-to-Have) */}
-                    <select
-                        value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value)}
-                        style={styles.selectInput}
-                        disabled={loading}
-                    >
-                        <option value="">All Statuses</option>
-                        {STATUSES.filter(s => s).map(status => (
-                            <option key={status} value={status}>{status}</option>
-                        ))}
-                    </select>
+                    {/* Status Filter */}
+                    <div style={styles.filterGroup}>
+                        <label htmlFor="status-filter" style={styles.filterLabel}>Status:</label>
+                        <select
+                            id="status-filter"
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            style={styles.selectInput}
+                            disabled={loading || allCampaigns.length === 0}
+                        >
+                            <option value="">All Statuses</option>
+                            {STATUSES.filter(s => s).map(status => (
+                                <option key={status} value={status}>{status}</option>
+                            ))}
+                        </select>
+                    </div>
+                    
+                    {/* Objective Filter */}
+                    <div style={styles.filterGroup}>
+                        <label htmlFor="objective-filter" style={styles.filterLabel}>Objective:</label>
+                        <input
+                            type="text"
+                            id="objective-filter"
+                            value={objectiveFilter}
+                            onChange={(e) => setObjectiveFilter(e.target.value)}
+                            placeholder="Filter by objective..."
+                            style={styles.textInput}
+                            disabled={loading || allCampaigns.length === 0}
+                        />
+                    </div>
+                    
+                    {/* Clear Filters Button */}
+                    {(statusFilter || objectiveFilter) && (
+                        <button 
+                            onClick={() => {
+                                setStatusFilter('');
+                                setObjectiveFilter('');
+                            }}
+                            style={styles.clearFiltersButton}
+                            disabled={loading}
+                        >
+                            Clear Filters
+                        </button>
+                    )}
                     
                     {/* Export Button */}
                     <button 
@@ -821,7 +866,58 @@ const styles = {
     subHeader: { color: '#555', marginBottom: '20px' },
     controls: { marginBottom: '20px', display: 'flex', gap: '15px', alignItems: 'center' },
     searchInput: { padding: '10px', width: '300px', border: '1px solid #ddd', borderRadius: '4px' },
-    selectInput: { padding: '10px', border: '1px solid #ddd', borderRadius: '4px' },
+    selectInput: { 
+        padding: '8px 12px', 
+        border: '1px solid #ddd', 
+        borderRadius: '4px',
+        minWidth: '150px',
+        backgroundColor: 'white',
+        ':focus': {
+            borderColor: '#3b5998',
+            outline: 'none',
+            boxShadow: '0 0 0 2px rgba(59, 89, 152, 0.2)'
+        }
+    },
+    textInput: {
+        padding: '8px 12px',
+        border: '1px solid #ddd',
+        borderRadius: '4px',
+        minWidth: '200px',
+        backgroundColor: 'white',
+        ':focus': {
+            borderColor: '#3b5998',
+            outline: 'none',
+            boxShadow: '0 0 0 2px rgba(59, 89, 152, 0.2)'
+        }
+    },
+    filterGroup: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px'
+    },
+    filterLabel: {
+        fontSize: '12px',
+        color: '#666',
+        fontWeight: '500'
+    },
+    clearFiltersButton: {
+        padding: '8px 12px',
+        backgroundColor: 'transparent',
+        border: '1px solid #ddd',
+        borderRadius: '4px',
+        color: '#666',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        '&:hover': {
+            backgroundColor: '#f5f5f5',
+            borderColor: '#ccc'
+        },
+        '&:active': {
+            backgroundColor: '#eee'
+        }
+    },
     table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' },
     th: { borderBottom: '3px solid #f0f0f0', padding: '12px 10px', cursor: 'pointer', color: '#333' },
     loginButton: { padding: '12px 25px', cursor: 'pointer', backgroundColor: '#3b5998', color: 'white', border: 'none', borderRadius: '6px', fontSize: '16px' },
