@@ -10,7 +10,13 @@ const CampaignsTable = () => {
     const [allCampaigns, setAllCampaigns] = useState([]);
     const [loading, setLoading] = useState(false);
     const [authStatus, setAuthStatus] = useState('CHECKING'); // CHECKING, LOGGED_OUT, AUTHENTICATED, ERROR
-    const [apiError, setApiError] = useState(null);
+    const [apiError, setApiError] = useState({ 
+      title: '', 
+      message: '',
+      type: 'info',
+      isFatal: false,
+      hasError: false 
+    });
     const [advertiserId, setAdvertiserId] = useState(() => {
       // Try to get from URL params first
       const params = new URLSearchParams(window.location.search);
@@ -45,7 +51,13 @@ const CampaignsTable = () => {
                 return;
             } else if (params.get('authError')) {
                 setAuthStatus('ERROR');
-                setApiError('Authentication failed: ' + params.get('authError'));
+                setApiError({
+                  title: 'Authentication failed: ' + params.get('authError'),
+                  message: 'Authentication failed: ' + params.get('authError'),
+                  type: 'auth_error',
+                  isFatal: true,
+                  hasError: true
+                });
                 window.history.replaceState({}, document.title, window.location.pathname);
                 return;
             }
@@ -63,7 +75,13 @@ const CampaignsTable = () => {
         } catch (error) {
             console.error('Error checking auth status:', error);
             setAuthStatus('ERROR');
-            setApiError('Failed to check authentication status');
+            setApiError({
+              title: 'Failed to check authentication status',
+              message: 'Failed to check authentication status',
+              type: 'server_error',
+              isFatal: false,
+              hasError: true
+            });
         }
     }, []);
 
@@ -83,44 +101,68 @@ const CampaignsTable = () => {
           case 400:
             return {
               title: 'Invalid Request',
-              message: data.message || 'The request was invalid. Please check your input and try again.'
+              message: data.message || 'The request was invalid. Please check your input and try again.',
+              type: 'validation_error',
+              isFatal: false,
+              hasError: true
             };
           case 401:
             setAuthStatus('UNAUTHENTICATED');
             return {
               title: 'Session Expired',
-              message: 'Your session has expired. Please log in again.'
+              message: 'Your session has expired. Please log in again.',
+              type: 'auth_error',
+              isFatal: true,
+              hasError: true
             };
           case 403:
             return {
               title: 'Access Denied',
-              message: 'You do not have permission to access this advertiser account.'
+              message: 'You do not have permission to access this advertiser account.',
+              type: 'permission_error',
+              isFatal: true,
+              hasError: true
             };
           case 404:
             return {
               title: 'Not Found',
-              message: 'The requested advertiser account was not found. Please check the ID and try again.'
+              message: 'The requested advertiser account was not found. Please check the ID and try again.',
+              type: 'not_found',
+              isFatal: false,
+              hasError: true
             };
           case 429:
             return {
               title: 'Too Many Requests',
-              message: 'You\'ve made too many requests. Please wait a moment and try again.'
+              message: 'You\'ve made too many requests. Please wait a moment and try again.',
+              type: 'rate_limit',
+              isFatal: false,
+              hasError: true
             };
           default:
             return {
               title: 'Error',
-              message: data?.message || 'An unexpected error occurred. Please try again.'
+              message: data?.message || 'An unexpected error occurred. Please try again.',
+              type: 'server_error',
+              isFatal: false,
+              hasError: true
             };
         }
       } else if (error.request) {
         return {
           title: 'Network Error',
-          message: 'Unable to connect to the server. Please check your internet connection and try again.'
+          message: 'Unable to connect to the server. Please check your internet connection and try again.',
+          type: 'network_error',
+          isFatal: false,
+          hasError: true
         };
       } else {
         return {
           title: 'Error',
-          message: error.message || 'An error occurred while processing your request.'
+          message: error.message || 'An error occurred while processing your request.',
+          type: 'request_error',
+          isFatal: false,
+          hasError: true
         };
       }  
     };
@@ -133,7 +175,10 @@ const CampaignsTable = () => {
         if (!currentId) {
             setApiError({
               title: 'Missing Advertiser ID',
-              message: 'Please enter a valid advertiser ID'
+              message: 'Please enter a valid advertiser ID',
+              type: 'validation_error',
+              isFatal: false,
+              hasError: true
             });
             return;
         }
@@ -174,7 +219,10 @@ const CampaignsTable = () => {
           if (!rawData || (Array.isArray(rawData) && rawData.length === 0)) {
             setApiError({
               title: 'No Campaigns Found',
-              message: 'No campaigns found for this advertiser account.'
+              message: 'No campaigns found for this advertiser account.',
+              type: 'no_data',
+              isFatal: false,
+              hasError: true
             });
             setAllCampaigns([]);
             return;
@@ -195,13 +243,22 @@ const CampaignsTable = () => {
           }));
           
           setAllCampaigns(transformedData);
-          setApiError(null);
+          setApiError({ 
+            title: '', 
+            message: '',
+            type: 'info',
+            isFatal: false,
+            hasError: false 
+          });
         } catch (error) {
           console.error('Error fetching campaigns:', error);
           const errorInfo = handleApiError(error);
           setApiError({
             title: errorInfo.title || 'Error Loading Campaigns',
-            message: errorInfo.message || 'Failed to load campaigns. Please try again.'
+            message: errorInfo.message || 'Failed to load campaigns. Please try again.',
+            type: errorInfo.type || 'api_error',
+            isFatal: errorInfo.isFatal || false,
+            hasError: true
           });
           setAllCampaigns([]);
         } finally {
@@ -321,8 +378,14 @@ const CampaignsTable = () => {
             return <tr><td colSpan="6" style={{textAlign: 'center'}}>Loading campaign data...</td></tr>;
         }
 
-        if (apiError) {
-            return <tr><td colSpan="6" style={{color: 'red', textAlign: 'center'}}>🚨 API Error: {apiError}</td></tr>;
+        if (apiError?.hasError) {
+            return (
+                <tr>
+                    <td colSpan="6" style={{color: 'red', textAlign: 'center', padding: '20px'}}>
+                        🚨 {apiError.title}: {apiError.message}
+                    </td>
+                </tr>
+            );
         }
 
         if (isAuthenticated && allCampaigns.length === 0 && !loading) {
@@ -377,8 +440,8 @@ const CampaignsTable = () => {
                                     )}
                                 </div>
                             </div>
-                        )}   {apiError ? (
-                            <p style={{ color: '#d32f2f' }}>{apiError}</p>
+                        )}   {apiError?.hasError ? (
+                            <p style={{ color: '#d32f2f' }}>{apiError.message}</p>
                         ) : (
                             <p>No campaigns found. Please enter an advertiser ID and click Load Campaigns.</p>
                         )}
