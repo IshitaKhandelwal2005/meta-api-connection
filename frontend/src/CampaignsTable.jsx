@@ -72,7 +72,7 @@ const CampaignsTable = () => {
         checkAuthStatus();
     }, [checkAuthStatus]);
 
-    // Handle different types of API errors
+    // Handle API errors
     const handleApiError = (error) => {
       console.error('API Error:', error);
       
@@ -83,75 +83,46 @@ const CampaignsTable = () => {
           case 400:
             return {
               title: 'Invalid Request',
-              message: data.message || 'The request was invalid. Please check your input and try again.',
-              type: 'validation_error',
-              isFatal: false
+              message: data.message || 'The request was invalid. Please check your input and try again.'
             };
           case 401:
+            setAuthStatus('UNAUTHENTICATED');
             return {
               title: 'Session Expired',
-              message: 'Your session has expired. Please log in again.',
-              type: 'auth_error',
-              isFatal: true
+              message: 'Your session has expired. Please log in again.'
             };
           case 403:
             return {
               title: 'Access Denied',
-              message: 'You do not have permission to access this advertiser account.',
-              type: 'permission_error',
-              isFatal: true
+              message: 'You do not have permission to access this advertiser account.'
             };
           case 404:
             return {
               title: 'Not Found',
-              message: 'The requested advertiser account was not found. Please check the ID and try again.',
-              type: 'not_found',
-              isFatal: false
+              message: 'The requested advertiser account was not found. Please check the ID and try again.'
             };
           case 429:
             return {
               title: 'Too Many Requests',
-              message: 'You\'ve made too many requests. Please wait a moment and try again.',
-              type: 'rate_limit',
-              isFatal: false,
-              retryAfter: error.response.headers['retry-after'] || 60
-            };
-          case 500:
-          case 502:
-          case 503:
-          case 504:
-            return {
-              title: 'Service Unavailable',
-              message: 'The server is currently unavailable. Please try again later.',
-              type: 'server_error',
-              isFatal: false
+              message: 'You\'ve made too many requests. Please wait a moment and try again.'
             };
           default:
             return {
               title: 'Error',
-              message: data?.message || 'An unexpected error occurred. Please try again.',
-              type: 'unknown_error',
-              isFatal: false
+              message: data?.message || 'An unexpected error occurred. Please try again.'
             };
         }
       } else if (error.request) {
-        // The request was made but no response was received
         return {
           title: 'Network Error',
-          message: 'Unable to connect to the server. Please check your internet connection and try again.',
-          type: 'network_error',
-          isFatal: false
+          message: 'Unable to connect to the server. Please check your internet connection and try again.'
         };
       } else {
-        // Something happened in setting up the request that triggered an Error
         return {
-          title: 'Request Error',
-          message: 'An error occurred while setting up the request.',
-          details: error.message,
-          type: 'request_error',
-          isFatal: false
+          title: 'Error',
+          message: error.message || 'An error occurred while processing your request.'
         };
-      }
+      }  
     };
 
     const fetchCampaigns = useCallback(async (id) => {
@@ -162,9 +133,7 @@ const CampaignsTable = () => {
         if (!currentId) {
             setApiError({
               title: 'Missing Advertiser ID',
-              message: 'Please enter a valid advertiser ID',
-              type: 'validation_error',
-              isFatal: false
+              message: 'Please enter a valid advertiser ID'
             });
             return;
         }
@@ -177,9 +146,7 @@ const CampaignsTable = () => {
                 setIsAuthenticated(false);
                 setApiError({
                   title: 'Session Expired',
-                  message: 'Your session has expired. Please log in again.',
-                  type: 'auth_error',
-                  isFatal: true
+                  message: 'Your session has expired. Please log in again.'
                 });
                 return;
             }
@@ -187,9 +154,7 @@ const CampaignsTable = () => {
             console.error('Error verifying authentication:', error);
             setApiError({
               title: 'Authentication Error',
-              message: 'Failed to verify authentication status',
-              type: 'auth_error',
-              isFatal: true
+              message: 'Failed to verify authentication status'
             });
             return;
         }
@@ -206,46 +171,38 @@ const CampaignsTable = () => {
           
           const rawData = response.data.campaigns || [];
           
-          if (rawData.length === 0) {
+          if (!rawData || (Array.isArray(rawData) && rawData.length === 0)) {
             setApiError({
               title: 'No Campaigns Found',
-              message: 'No campaigns found for this advertiser account.',
-              type: 'no_data',
-              isFatal: false
+              message: 'No campaigns found for this advertiser account.'
             });
             setAllCampaigns([]);
             return;
           }
           
+          // Transform the data to match the expected format
           const transformedData = rawData.map(campaign => ({
-            id: campaign.id,
-            campaign_name: campaign.name,
+            id: campaign.id || '',
+            campaign_name: campaign.name || 'Untitled Campaign',
             objective: campaign.objective || 'N/A',
-            campaign_status: campaign.status || 'N/A',
-            budget: campaign.daily_budget
-                ? (parseFloat(campaign.daily_budget) / 100).toFixed(2)
-                : 'N/A',
+            campaign_status: campaign.status || 'UNKNOWN',
+            daily_budget: campaign.daily_budget 
+              ? (parseFloat(campaign.daily_budget) / 100).toFixed(2) 
+              : 'N/A',
             created_time: campaign.created_time
-                ? new Date(campaign.created_time)
-                : new Date(0),
+              ? new Date(campaign.created_time)
+              : new Date()
           }));
           
           setAllCampaigns(transformedData);
-          setCurrentPage(1);
-          
+          setApiError(null);
         } catch (error) {
+          console.error('Error fetching campaigns:', error);
           const errorInfo = handleApiError(error);
           setApiError({
-            ...errorInfo,
-            timestamp: new Date().toISOString()
+            title: errorInfo.title || 'Error Loading Campaigns',
+            message: errorInfo.message || 'Failed to load campaigns. Please try again.'
           });
-          
-          // If it's an auth error, log the user out
-          if (errorInfo.type === 'auth_error') {
-            setAuthStatus('LOGGED_OUT');
-            setIsAuthenticated(false);
-          }
-          
           setAllCampaigns([]);
         } finally {
           setLoading(false);
