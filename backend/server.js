@@ -90,7 +90,7 @@ app.get('/auth/meta/callback', async (req, res) => {
         
         console.log('✅ Access Token acquired and stored in session.');
         // Redirect user back to the frontend with a success flag
-        res.redirect('${FrontendUrl}/?authSuccess=true');
+        res.redirect(`${FrontendUrl}/?authSuccess=true`);
 
     } catch (err) {
         console.error('Token Exchange Failed:', err.response ? err.response.data : err.message);
