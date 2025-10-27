@@ -98,35 +98,153 @@ app.get('/auth/meta/callback', async (req, res) => {
     }
 });
 
-app.get('/api/campaigns', requireAuth, async (req, res) => {
-  // console.log("reached first");
-  const { advertiser_id, page_size = 25 } = req.query;
-  const finalAdvertiserId = advertiser_id?.startsWith('act_')
-  ? advertiser_id
-  : `act_${advertiser_id || process.env.ADVERTISER_ID}`;
+// Error handler for Meta API errors
+const handleMetaApiError = (error) => {
+  console.error('Meta API Error:', error.response?.data || error.message);
   
-  try {
-      const endpoint = `https://graph.facebook.com/v24.0/${finalAdvertiserId}?fields=campaigns%7Bid%2Cname%2Cobjective%2Cstatus%2Cdaily_budget%2Ccreated_time%7D&access_token=${req.session.metaAccessToken}`;
+  if (error.response) {
+    const { status, data } = error.response;
+    
+    // Handle different error status codes
+    switch (status) {
+      case 400:
+        return {
+          status: 400,
+          error: 'Invalid Request',
+          message: data.error?.message || 'The request was malformed or missing required parameters.',
+          details: data.error || {},
+          type: 'VALIDATION_ERROR'
+        };
+      case 401:
+        return {
+          status: 401,
+          error: 'Unauthorized',
+          message: 'Your session has expired or the access token is invalid. Please log in again.',
+          type: 'AUTH_ERROR'
+        };
+      case 403:
+        return {
+          status: 403,
+          error: 'Forbidden',
+          message: 'You do not have permission to access this resource.',
+          details: data.error || {},
+          type: 'PERMISSION_ERROR'
+        };
+      case 404:
+        return {
+          status: 404,
+          error: 'Not Found',
+          message: 'The requested advertiser account or resource was not found.',
+          type: 'NOT_FOUND_ERROR'
+        };
+      case 429:
+        return {
+          status: 429,
+          error: 'Rate Limit Exceeded',
+          message: 'Too many requests. Please wait before making additional requests.',
+          type: 'RATE_LIMIT_ERROR',
+          retryAfter: error.response.headers['retry-after'] || 60
+        };
+      case 500:
+      case 502:
+      case 503:
+      case 504:
+        return {
+          status,
+          error: 'Service Unavailable',
+          message: 'The Meta API is currently unavailable. Please try again later.',
+          type: 'API_UNAVAILABLE_ERROR'
+        };
+      default:
+        return {
+          status: status || 500,
+          error: 'API Request Failed',
+          message: data.error?.message || 'An unknown error occurred while fetching data from Meta API.',
+          details: data.error || {},
+          type: 'API_ERROR'
+        };
+    }
+  } else if (error.request) {
+    // The request was made but no response was received
+    return {
+      status: 503,
+      error: 'Network Error',
+      message: 'Unable to connect to the Meta API. Please check your internet connection and try again.',
+      type: 'NETWORK_ERROR'
+    };
+  } else {
+    // Something happened in setting up the request that triggered an Error
+    return {
+      status: 500,
+      error: 'Request Error',
+      message: 'An error occurred while setting up the request.',
+      details: error.message,
+      type: 'REQUEST_ERROR'
+    };
+  }
+};
 
-      // console.log("entered try block"+metaAccessToken);
+app.get('/api/campaigns', requireAuth, async (req, res) => {
+  const { advertiser_id, page_size = 25 } = req.query;
+  
+  // Validate advertiser_id
+  if (!advertiser_id) {
+    return res.status(400).json({
+      status: 400,
+      error: 'Missing Parameter',
+      message: 'advertiser_id is required',
+      type: 'VALIDATION_ERROR'
+    });
+  }
+
+  const finalAdvertiserId = advertiser_id.startsWith('act_')
+    ? advertiser_id
+    : `act_${advertiser_id}`;
+
+  try {
+    const endpoint = `https://graph.facebook.com/v24.0/${finalAdvertiserId}?fields=campaigns%7Bid%2Cname%2Cobjective%2Cstatus%2Cdaily_budget%2Ccreated_time%7D`;
     
     const response = await axios.get(endpoint, {
-        headers: { Authorization: `Bearer ${req.session.metaAccessToken}` },
+      headers: { 
+        Authorization: `Bearer ${req.session.metaAccessToken}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000 // 10 second timeout
+    });
+
+    // Handle empty or invalid response
+    if (!response.data || !response.data.campaigns) {
+      return res.status(200).json({ 
+        campaigns: [],
+        message: 'No campaigns found for this advertiser account.'
+      });
+    }
+
+    const campaigns = response.data.campaigns?.data || [];
+    res.json({ 
+      campaigns,
+      pagination: {
+        total: campaigns.length,
+        page_size: parseInt(page_size, 10) || 25
+      }
     });
     
-    // console.log("Full response data:", response.data);
-
-    // ✅ Access campaigns properly
-    const campaigns = response.data.campaigns?.data || [];
-    // console.log("Fetched campaigns:", campaigns);
-
-    res.json({ campaigns });
-    // res.json(response.data);
-  } catch (err) {
-    console.error('Meta API Error:', err.response?.data || err.message);
-    res.status(500).json({
-      error: 'Failed to fetch campaign data from Meta API.',
-      details: err.response?.data || err.message,
+  } catch (error) {
+    const errorResponse = handleMetaApiError(error);
+    
+    // If it's an authentication error, clear the session
+    if (errorResponse.type === 'AUTH_ERROR') {
+      req.session.destroy();
+    }
+    
+    res.status(errorResponse.status || 500).json({
+      error: errorResponse.error,
+      message: errorResponse.message,
+      type: errorResponse.type,
+      ...(process.env.NODE_ENV === 'development' && {
+        details: errorResponse.details,
+        stack: error.stack
+      })
     });
   }
 });

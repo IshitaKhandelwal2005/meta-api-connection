@@ -1,10 +1,8 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-const BACKEND_URL = 'http://localhost:5000';
-
-// Configure axios to send cookies with requests
 axios.defaults.withCredentials = true;
 
 const CampaignsTable = () => {
@@ -70,14 +68,100 @@ const CampaignsTable = () => {
         checkAuthStatus();
     }, [checkAuthStatus]);
 
+    // Handle different types of API errors
+    const handleApiError = (error) => {
+      console.error('API Error:', error);
+      
+      if (error.response) {
+        const { status, data } = error.response;
+        
+        switch (status) {
+          case 400:
+            return {
+              title: 'Invalid Request',
+              message: data.message || 'The request was invalid. Please check your input and try again.',
+              type: 'validation_error',
+              isFatal: false
+            };
+          case 401:
+            return {
+              title: 'Session Expired',
+              message: 'Your session has expired. Please log in again.',
+              type: 'auth_error',
+              isFatal: true
+            };
+          case 403:
+            return {
+              title: 'Access Denied',
+              message: 'You do not have permission to access this advertiser account.',
+              type: 'permission_error',
+              isFatal: true
+            };
+          case 404:
+            return {
+              title: 'Not Found',
+              message: 'The requested advertiser account was not found. Please check the ID and try again.',
+              type: 'not_found',
+              isFatal: false
+            };
+          case 429:
+            return {
+              title: 'Too Many Requests',
+              message: 'You\'ve made too many requests. Please wait a moment and try again.',
+              type: 'rate_limit',
+              isFatal: false,
+              retryAfter: error.response.headers['retry-after'] || 60
+            };
+          case 500:
+          case 502:
+          case 503:
+          case 504:
+            return {
+              title: 'Service Unavailable',
+              message: 'The server is currently unavailable. Please try again later.',
+              type: 'server_error',
+              isFatal: false
+            };
+          default:
+            return {
+              title: 'Error',
+              message: data?.message || 'An unexpected error occurred. Please try again.',
+              type: 'unknown_error',
+              isFatal: false
+            };
+        }
+      } else if (error.request) {
+        // The request was made but no response was received
+        return {
+          title: 'Network Error',
+          message: 'Unable to connect to the server. Please check your internet connection and try again.',
+          type: 'network_error',
+          isFatal: false
+        };
+      } else {
+        // Something happened in setting up the request that triggered an Error
+        return {
+          title: 'Request Error',
+          message: 'An error occurred while setting up the request.',
+          details: error.message,
+          type: 'request_error',
+          isFatal: false
+        };
+      }
+    };
+
     const fetchCampaigns = useCallback(async (id) => {
         // Ensure we have a valid string ID
         const currentId = typeof id === 'string' ? id.trim() : 
                          (typeof advertiserId === 'string' ? advertiserId.trim() : '');
         
         if (!currentId) {
-            const errorMsg = !currentId ? 'Please enter a valid advertiser ID' : 'Advertiser ID is required';
-            setApiError(errorMsg);
+            setApiError({
+              title: 'Missing Advertiser ID',
+              message: 'Please enter a valid advertiser ID',
+              type: 'validation_error',
+              isFatal: false
+            });
             return;
         }
 
@@ -87,56 +171,81 @@ const CampaignsTable = () => {
             if (!authResponse.data.authenticated) {
                 setAuthStatus('LOGGED_OUT');
                 setIsAuthenticated(false);
-                setApiError('Your session has expired. Please log in again.');
+                setApiError({
+                  title: 'Session Expired',
+                  message: 'Your session has expired. Please log in again.',
+                  type: 'auth_error',
+                  isFatal: true
+                });
                 return;
             }
         } catch (error) {
             console.error('Error verifying authentication:', error);
-            setApiError('Failed to verify authentication status');
+            setApiError({
+              title: 'Authentication Error',
+              message: 'Failed to verify authentication status',
+              type: 'auth_error',
+              isFatal: true
+            });
             return;
         }
   
-  setLoading(true);
-  setApiError(null);
+        setLoading(true);
+        setApiError(null);
 
-  try {
-    const response = await axios.get(`${BACKEND_URL}/api/campaigns`, {
-      params: {
-        advertiser_id: currentId,
-        page_size: 100,
-      },
-    });
-    // console.log("this is the response in frontend"+response);
-    const rawData = response.data.campaigns || [];
-    // console.log("this is the response in frontend"+rawData);
-    
-    const transformedData = rawData.map(campaign => ({
-    id: campaign.id,
-    campaign_name: campaign.name,
-    objective: campaign.objective || 'N/A',
-    campaign_status: campaign.status || 'N/A',
-    budget: campaign.daily_budget
-        ? (parseFloat(campaign.daily_budget) / 100).toFixed(2)
-        : 'N/A',
-    created_time: campaign.created_time
-        ? new Date(campaign.created_time)
-        : new Date(0),
-    }));
-    
-    // console.log("this is the response"+transformedData);
-    setAllCampaigns(transformedData);
-    setCurrentPage(1);
-    setLoading(false);
-  } catch (err) {
-    console.error(err);
-    setApiError(
-      err.response?.data?.details?.error_user_title ||
-      err.response?.data?.error ||
-      'Could not fetch campaigns from proxy.'
-    );
-    setLoading(false);
-    setAllCampaigns([]);
-  }
+        try {
+          const response = await axios.get(`${BACKEND_URL}/api/campaigns`, {
+            params: { advertiser_id: currentId, page_size: 100 },
+            timeout: 15000, // 15 second timeout
+            validateStatus: (status) => status < 500 // Don't throw for 4xx errors
+          });
+          
+          const rawData = response.data.campaigns || [];
+          
+          if (rawData.length === 0) {
+            setApiError({
+              title: 'No Campaigns Found',
+              message: 'No campaigns found for this advertiser account.',
+              type: 'no_data',
+              isFatal: false
+            });
+            setAllCampaigns([]);
+            return;
+          }
+          
+          const transformedData = rawData.map(campaign => ({
+            id: campaign.id,
+            campaign_name: campaign.name,
+            objective: campaign.objective || 'N/A',
+            campaign_status: campaign.status || 'N/A',
+            budget: campaign.daily_budget
+                ? (parseFloat(campaign.daily_budget) / 100).toFixed(2)
+                : 'N/A',
+            created_time: campaign.created_time
+                ? new Date(campaign.created_time)
+                : new Date(0),
+          }));
+          
+          setAllCampaigns(transformedData);
+          setCurrentPage(1);
+          
+        } catch (error) {
+          const errorInfo = handleApiError(error);
+          setApiError({
+            ...errorInfo,
+            timestamp: new Date().toISOString()
+          });
+          
+          // If it's an auth error, log the user out
+          if (errorInfo.type === 'auth_error') {
+            setAuthStatus('LOGGED_OUT');
+            setIsAuthenticated(false);
+          }
+          
+          setAllCampaigns([]);
+        } finally {
+          setLoading(false);
+        }
 }, [authStatus]);
 
 
@@ -250,7 +359,54 @@ const CampaignsTable = () => {
             return (
                 <tr>
                     <td colSpan="6" style={{ textAlign: 'center', padding: '40px' }}>
-                        {apiError ? (
+                        {apiError && (
+                            <div style={{
+                                margin: '15px 0',
+                                padding: '12px 15px',
+                                borderRadius: '4px',
+                                backgroundColor: apiError.type === 'no_data' ? '#e6f7ff' : '#fff2f0',
+                                borderLeft: `4px solid ${
+                                    apiError.type === 'auth_error' ? '#ff4d4f' : 
+                                    apiError.type === 'validation_error' ? '#faad14' :
+                                    apiError.type === 'no_data' ? '#1890ff' : '#ff4d4f'
+                                }`,
+                                color: '#333',
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                maxWidth: '800px'
+                            }}>
+                                <div style={{ marginRight: '12px', fontSize: '16px' }}>
+                                    {apiError.type === 'no_data' ? 'ℹ️' : '⚠️'}
+                                </div>
+                                <div>
+                                    <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                                        {apiError.title}
+                                    </div>
+                                    <div style={{ fontSize: '14px', marginBottom: '8px' }}>
+                                        {apiError.message}
+                                    </div>
+                                    {apiError.details && process.env.NODE_ENV === 'development' && (
+                                        <div style={{ 
+                                            fontSize: '12px', 
+                                            color: '#666', 
+                                            marginTop: '8px',
+                                            fontFamily: 'monospace',
+                                            whiteSpace: 'pre-wrap',
+                                            wordBreak: 'break-word'
+                                        }}>
+                                            {typeof apiError.details === 'string' 
+                                                ? apiError.details 
+                                                : JSON.stringify(apiError.details, null, 2)}
+                                        </div>
+                                    )}
+                                    {apiError.type === 'rate_limit' && apiError.retryAfter && (
+                                        <div style={{ marginTop: '8px', fontSize: '13px' }}>
+                                            Retry after: {apiError.retryAfter} seconds
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}   {apiError ? (
                             <p style={{ color: '#d32f2f' }}>{apiError}</p>
                         ) : (
                             <p>No campaigns found. Please enter an advertiser ID and click Load Campaigns.</p>
@@ -382,11 +538,6 @@ const CampaignsTable = () => {
                             <option key={status} value={status}>{status}</option>
                         ))}
                     </select>
-
-                    {/* Refresh Button */}
-                    <button onClick={fetchCampaigns} disabled={loading} style={styles.refreshButton}>
-                        {loading ? 'Refreshing...' : 'Refresh Data'}
-                    </button>
                     
                     {/* Sort Button */}
                     <button 
@@ -647,7 +798,6 @@ const styles = {
     controls: { marginBottom: '20px', display: 'flex', gap: '15px', alignItems: 'center' },
     searchInput: { padding: '10px', width: '300px', border: '1px solid #ddd', borderRadius: '4px' },
     selectInput: { padding: '10px', border: '1px solid #ddd', borderRadius: '4px' },
-    refreshButton: { padding: '10px 15px', cursor: 'pointer', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px' },
     table: { width: '100%', borderCollapse: 'collapse', textAlign: 'left', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' },
     th: { borderBottom: '3px solid #f0f0f0', padding: '12px 10px', cursor: 'pointer', color: '#333' },
     loginButton: { padding: '12px 25px', cursor: 'pointer', backgroundColor: '#3b5998', color: 'white', border: 'none', borderRadius: '6px', fontSize: '16px' },
@@ -674,15 +824,3 @@ const styles = {
 };
 
 export default CampaignsTable;
-
-// Note: In a standard CRA/Vite setup, you would update src/App.js to render this component:
-/*
-// src/App.js
-import CampaignsTable from './CampaignsTable';
-function App() {
-  return (
-    <CampaignsTable />
-  );
-}
-export default App;
-*/
