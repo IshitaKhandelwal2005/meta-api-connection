@@ -1,0 +1,3 @@
+appid=2321781694925322
+secret=5b179d56fd5736f235791c7f7261ebe6
+redirect=http://localhost:5000/auth/meta/callback
