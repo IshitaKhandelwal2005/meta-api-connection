@@ -10,7 +10,8 @@ const adsSdk = require('facebook-nodejs-business-sdk');
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
-
+const FrontendUrl = process.env.FRONTEND_URL;
+const backendUrl = process.env.BACKEND_URL;
 const FACEBOOK_LOGIN_BASE = 'https://www.facebook.com'; 
 // 2. For specific Meta Marketing Open API v1.3
 const OPEN_API_BASE = 'https://adsapi.cn.messenger.com'; 
@@ -74,7 +75,7 @@ app.get('/auth/meta/callback', async (req, res) => {
     // Handle error returned by Meta if the user denied access
     if (error) {
         console.error('Meta Auth Error:', error_reason);
-        return res.redirect(`http://localhost:3000/?authError=${error_reason}`);
+        return res.redirect(`${FrontendUrl}/?authError=${error_reason}`);
     }
 
     try {
@@ -89,12 +90,12 @@ app.get('/auth/meta/callback', async (req, res) => {
         
         console.log('✅ Access Token acquired and stored in session.');
         // Redirect user back to the frontend with a success flag
-        res.redirect('http://localhost:3000/?authSuccess=true');
+        res.redirect('${FrontendUrl}/?authSuccess=true');
 
     } catch (err) {
         console.error('Token Exchange Failed:', err.response ? err.response.data : err.message);
         const errorMessage = err.response ? JSON.stringify(err.response.data) : 'Token_exchange_failed';
-        res.redirect(`http://localhost:3000/?authError=${encodeURIComponent(errorMessage)}`);
+        res.redirect(`${FrontendUrl}?authError=${encodeURIComponent(errorMessage)}`);
     }
 });
 
@@ -256,7 +257,7 @@ app.get('/api/campaigns', requireAuth, async (req, res) => {
 // ==========================================================
 
 app.listen(PORT, () => {
-    console.log(`Backend Server running on http://localhost:${PORT}`);
+    console.log(`Backend Server running on ${backendUrl}`);
     console.log(`Redirect URI set to: ${process.env.REDIRECT_URI}`);
     console.log('--- READY ---');
 });
