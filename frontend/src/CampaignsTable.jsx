@@ -393,7 +393,7 @@ const CampaignsTable = () => {
             return (
                 <tr>
                     <td colSpan="6" style={{ textAlign: 'center', padding: '40px' }}>
-                        {apiError && (
+                        {apiError?.hasError ? (
                             <div style={{
                                 margin: '15px 0',
                                 padding: '12px 15px',
@@ -440,8 +440,6 @@ const CampaignsTable = () => {
                                     )}
                                 </div>
                             </div>
-                        )}   {apiError?.hasError ? (
-                            <p style={{ color: '#d32f2f' }}>{apiError.message}</p>
                         ) : (
                             <p>No campaigns found. Please enter an advertiser ID and click Load Campaigns.</p>
                         )}
