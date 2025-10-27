@@ -15,6 +15,9 @@ const CampaignsTable = () => {
     const [statusFilter, setStatusFilter] = useState(''); // Nice-to-Have filter
     const [sortConfig, setSortConfig] = useState({ key: 'created_time', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
+    const [showSortDialog, setShowSortDialog] = useState(false);
+    const [sortField, setSortField] = useState('created_time');
+    const [sortOrder, setSortOrder] = useState('descending');
     const campaignsPerPage = 10;
     
     const STATUSES = ['', 'ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
@@ -76,38 +79,70 @@ const CampaignsTable = () => {
     setLoading(false);
     setAllCampaigns([]);
   }
-}, [authStatus, statusFilter]);
+}, [authStatus]);
 
 
     useEffect(() => {
         if (authStatus === 'AUTHENTICATED') {
             fetchCampaigns();
         }
-    }, [authStatus, statusFilter, fetchCampaigns]);
+    }, [authStatus, fetchCampaigns]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm, statusFilter, sortConfig]);
 
     const filteredCampaigns = useMemo(() => {
-        return allCampaigns.filter(campaign =>
-            campaign.campaign_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            campaign.campaign_id.toString().includes(searchTerm)
-        );
-    }, [allCampaigns, searchTerm]);
+        const searchLower = searchTerm.toLowerCase();
+        return allCampaigns.filter(campaign => {
+            // Apply status filter if set
+            if (statusFilter && campaign.campaign_status !== statusFilter) {
+                return false;
+            }
+            
+            // If no search term, return all that match status filter
+            if (!searchLower) return true;
+            
+            // Check search term against all searchable fields
+            return (
+                (campaign.campaign_name && campaign.campaign_name.toLowerCase().includes(searchLower)) ||
+                (campaign.id && campaign.id.toString().toLowerCase().includes(searchLower)) ||
+                (campaign.objective && campaign.objective.toLowerCase().includes(searchLower)) ||
+                (campaign.campaign_status && campaign.campaign_status.toLowerCase().includes(searchLower))
+            );
+        });
+    }, [allCampaigns, searchTerm, statusFilter]);
 
     // 2. Sorting
     const sortedCampaigns = useMemo(() => {
+        if (!filteredCampaigns.length) return [];
+        
         let sortableItems = [...filteredCampaigns];
         if (sortConfig.key) {
             sortableItems.sort((a, b) => {
-                const aValue = a[sortConfig.key];
-                const bValue = b[sortConfig.key];
+                let aValue = a[sortConfig.key];
+                let bValue = b[sortConfig.key];
                 
-                // Handle mixed types (like budget 'N/A' vs number)
-                const aIsNA = aValue === 'N/A';
-                const bIsNA = bValue === 'N/A';
-
-                if (aIsNA && bIsNA) return 0;
-                if (aIsNA) return sortConfig.direction === 'ascending' ? 1 : -1; // Push N/A to the bottom
-                if (bIsNA) return sortConfig.direction === 'ascending' ? -1 : 1;
-
+                // Handle date sorting
+                if (sortConfig.key === 'created_time' && aValue instanceof Date && bValue instanceof Date) {
+                    return sortConfig.direction === 'ascending' 
+                        ? aValue - bValue 
+                        : bValue - aValue;
+                }
+                
+                // Handle numeric values (like budget)
+                if (sortConfig.key === 'budget' && aValue !== 'N/A' && bValue !== 'N/A') {
+                    aValue = parseFloat(aValue);
+                    bValue = parseFloat(bValue);
+                    return sortConfig.direction === 'ascending' 
+                        ? aValue - bValue 
+                        : bValue - aValue;
+                }
+                
+                // Handle string values
+                aValue = String(aValue || '').toLowerCase();
+                bValue = String(bValue || '').toLowerCase();
+                
                 if (aValue < bValue) {
                     return sortConfig.direction === 'ascending' ? -1 : 1;
                 }
@@ -120,16 +155,19 @@ const CampaignsTable = () => {
         return sortableItems;
     }, [filteredCampaigns, sortConfig]);
 
-    const requestSort = (key) => {
-        let direction = 'ascending';
-        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
-            direction = 'descending';
-        }
-        setSortConfig({ key, direction });
+    const applySort = () => {
+        setSortConfig({ key: sortField, direction: sortOrder });
+        setShowSortDialog(false);
+    };
+
+    const openSortDialog = () => {
+        setSortField(sortConfig.key);
+        setSortOrder(sortConfig.direction);
+        setShowSortDialog(true);
     };
 
     // 3. Pagination
-    const totalPages = Math.ceil(sortedCampaigns.length / campaignsPerPage);
+    const totalPages = Math.ceil(sortedCampaigns.length / campaignsPerPage) || 1;
     const currentCampaigns = useMemo(() => {
         const startIndex = (currentPage - 1) * campaignsPerPage;
         return sortedCampaigns.slice(startIndex, startIndex + campaignsPerPage);
@@ -233,6 +271,15 @@ const CampaignsTable = () => {
                     <button onClick={fetchCampaigns} disabled={loading} style={styles.refreshButton}>
                         {loading ? 'Refreshing...' : 'Refresh Data'}
                     </button>
+                    
+                    {/* Sort Button */}
+                    <button 
+                        onClick={openSortDialog}
+                        style={styles.sortButton}
+                        disabled={loading}
+                    >
+                        Sort
+                    </button>
                 </div>
             )}
 
@@ -243,14 +290,9 @@ const CampaignsTable = () => {
                         {tableHeaders.map(({ key, label }) => (
                             <th 
                                 key={key}
-                                onClick={() => requestSort(key)} 
-                                style={{ ...styles.th, backgroundColor: sortConfig.key === key ? '#e0f7fa' : 'white' }}
+                                style={styles.th}
                             >
                                 {label}
-                                {/* Sort Indicator */}
-                                {sortConfig.key === key && (
-                                    <span>{sortConfig.direction === 'ascending' ? ' ▲' : ' ▼'}</span>
-                                )}
                             </th>
                         ))}
                     </tr>
@@ -260,24 +302,81 @@ const CampaignsTable = () => {
                 </tbody>
             </table>
 
+            {/* Sort Dialog */}
+            {showSortDialog && (
+                <div style={styles.sortDialog}>
+                    <div style={styles.sortDialogContent}>
+                        <h3 style={{marginTop: 0}}>Sort Campaigns</h3>
+                        <div style={styles.sortOption}>
+                            <label>Sort by:</label>
+                            <select 
+                                value={sortField}
+                                onChange={(e) => setSortField(e.target.value)}
+                                style={styles.sortSelect}
+                            >
+                                <option value="id">ID</option>
+                                <option value="campaign_name">Name</option>
+                                <option value="objective">Objective</option>
+                                <option value="campaign_status">Status</option>
+                                <option value="budget">Budget</option>
+                                <option value="created_time">Created Time</option>
+                            </select>
+                        </div>
+                        <div style={styles.sortOption}>
+                            <label>Order:</label>
+                            <select 
+                                value={sortOrder}
+                                onChange={(e) => setSortOrder(e.target.value)}
+                                style={styles.sortSelect}
+                            >
+                                <option value="ascending">Ascending (A-Z, 0-9, Old-New)</option>
+                                <option value="descending">Descending (Z-A, 9-0, New-Old)</option>
+                            </select>
+                        </div>
+                        <div style={styles.sortButtons}>
+                            <button 
+                                onClick={() => setShowSortDialog(false)}
+                                style={styles.cancelButton}
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                onClick={applySort}
+                                style={styles.applyButton}
+                            >
+                                Apply Sort
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Pagination Controls */}
-            {(authStatus === 'AUTHENTICATED' && sortedCampaigns.length > campaignsPerPage) && (
-                <div style={styles.paginationControls}>
-                    <button 
-                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} 
-                        disabled={currentPage === 1}
-                        style={styles.paginationButton}
-                    >
-                        &larr; Previous
-                    </button>
-                    <span style={{ margin: '0 15px' }}>Page **{currentPage}** of **{totalPages}**</span>
-                    <button 
-                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} 
-                        disabled={currentPage === totalPages}
-                        style={styles.paginationButton}
-                    >
-                        Next &rarr;
-                    </button>
+            {(authStatus === 'AUTHENTICATED' && sortedCampaigns.length > 0) && (
+                <div style={styles.paginationContainer}>
+                    <div style={styles.paginationInfo}>
+                        Showing {Math.min((currentPage - 1) * campaignsPerPage + 1, sortedCampaigns.length)}-
+                        {Math.min(currentPage * campaignsPerPage, sortedCampaigns.length)} of {sortedCampaigns.length} campaigns
+                    </div>
+                    <div style={styles.paginationControls}>
+                        <button 
+                            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} 
+                            disabled={currentPage === 1 || loading}
+                            style={styles.paginationButton}
+                        >
+                            &larr; Previous
+                        </button>
+                        <span style={styles.pageInfo}>
+                            Page {currentPage} of {totalPages}
+                        </span>
+                        <button 
+                            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} 
+                            disabled={currentPage === totalPages || loading}
+                            style={styles.paginationButton}
+                        >
+                            Next &rarr;
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
@@ -286,6 +385,109 @@ const CampaignsTable = () => {
 
 // Basic Inline Styles
 const styles = {
+    sortButton: {
+        padding: '10px 15px',
+        backgroundColor: '#f0f0f0',
+        border: '1px solid #ddd',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        marginLeft: '10px',
+        ':hover': {
+            backgroundColor: '#e0e0e0'
+        },
+        ':disabled': {
+            opacity: 0.6,
+            cursor: 'not-allowed'
+        }
+    },
+    sortDialog: {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000
+    },
+    sortDialogContent: {
+        backgroundColor: 'white',
+        padding: '20px',
+        borderRadius: '8px',
+        width: '400px',
+        maxWidth: '90%',
+        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+    },
+    sortOption: {
+        margin: '15px 0'
+    },
+    sortSelect: {
+        width: '100%',
+        padding: '8px',
+        marginTop: '5px',
+        border: '1px solid #ddd',
+        borderRadius: '4px',
+        fontSize: '14px'
+    },
+    sortButtons: {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        marginTop: '20px',
+        gap: '10px'
+    },
+    applyButton: {
+        padding: '8px 16px',
+        backgroundColor: '#4CAF50',
+        color: 'white',
+        border: 'none',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        ':hover': {
+            backgroundColor: '#45a049'
+        }
+    },
+    cancelButton: {
+        padding: '8px 16px',
+        backgroundColor: '#f0f0f0',
+        border: '1px solid #ddd',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        ':hover': {
+            backgroundColor: '#e0e0e0'
+        }
+    },
+    paginationContainer: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: '20px',
+        padding: '10px 0',
+        borderTop: '1px solid #eee'
+    },
+    paginationInfo: {
+        color: '#666',
+        fontSize: '14px'
+    },
+    pageInfo: {
+        margin: '0 15px'
+    },
+    paginationButton: {
+        padding: '8px 16px',
+        margin: '0 5px',
+        border: '1px solid #ddd',
+        borderRadius: '4px',
+        backgroundColor: '#fff',
+        cursor: 'pointer',
+        ':disabled': {
+            cursor: 'not-allowed',
+            opacity: 0.6
+        },
+        ':not(:disabled):hover': {
+            backgroundColor: '#f5f5f5'
+        }
+    },
     container: { padding: '20px', fontFamily: 'Segoe UI, Arial, sans-serif', maxWidth: '1200px', margin: 'auto' },
     header: { color: '#3b5998', borderBottom: '2px solid #3b5998', paddingBottom: '10px' },
     subHeader: { color: '#555', marginBottom: '20px' },
