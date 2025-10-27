@@ -28,7 +28,7 @@ const requireAuth = (req, res, next) => {
 // --- MIDDLEWARE ---
 // Configure CORS to allow access from the React frontend (running on port 3000)
 app.use(cors({
-  origin: 'https://meta-api-connection.vercel.app/',
+  origin: 'https://meta-api-connection.vercel.app',
   credentials: true
 }));
 app.use(express.json());
